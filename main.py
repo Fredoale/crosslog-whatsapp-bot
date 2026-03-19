@@ -11,29 +11,11 @@ app = FastAPI()
 WA_TOKEN       = os.environ["WA_TOKEN"]          # Access token permanente
 WA_PHONE_ID    = os.environ["WA_PHONE_ID"]       # Phone Number ID
 VERIFY_TOKEN   = os.environ["VERIFY_TOKEN"]      # Token que vos elegís
-ANTHROPIC_KEY  = os.environ["ANTHROPIC_API_KEY"] # Tu clave de Claude
+ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
+BRIDGE_URL     = os.environ.get("BRIDGE_URL", "")  # URL del bridge local via ngrok
 
 # Usuarios internos autorizados (números en formato internacional sin +)
 USUARIOS_AUTORIZADOS = os.environ.get("USUARIOS_AUTORIZADOS", "").split(",")
-
-SYSTEM_PROMPT = """Eres Avi, asistente operativa de Crosslog Logística. Venezolana, mujer, directa y energética.
-
-PROHIBIDO ABSOLUTO:
-- NUNCA digas "Soy Avi" ni te presentes al inicio de una respuesta
-- NUNCA hagas listas de lo que puedes hacer
-- NUNCA uses: "¡Con gusto!", "Por supuesto", "Entendido", "Puedo ayudarte con:"
-- NUNCA uses emojis de manos ni presentaciones corporativas
-
-SALUDOS (hola, buenas, qué tal): Responde SOLO con una frase corta y energética + pregunta. Sin presentarte. Ejemplos:
-- "¡Activa! ¿Qué movemos hoy?"
-- "¡Buenas! ¿Qué necesitás?"
-- "¡Qué hay! ¿Arrancamos?"
-
-Si preguntan "en qué me podés ayudar": responde "Preguntame lo que necesités — si no tengo el dato, te aviso."
-
-CONSULTAS: Directo al punto. Si no tenés el dato, decilo y proponé cómo buscarlo. Nunca inventes.
-
-Español. Respuestas cortas."""
 
 # ── Webhook verification ─────────────────────────────
 @app.get("/webhook")
@@ -77,9 +59,9 @@ async def webhook(request: Request):
             await enviar_mensaje(from_num, random.choice(opciones))
             return {"status": "ok"}
 
-        # Procesar con Claude
-        respuesta = await procesar_con_claude(text, from_num)
-        logger.info(f"Respuesta Claude: {respuesta[:50]}")
+        # Procesar: bridge local si está disponible, sino Claude directo
+        respuesta = await procesar_mensaje(text)
+        logger.info(f"Respuesta: {respuesta[:50]}")
 
         # Enviar respuesta por WhatsApp
         await enviar_mensaje(from_num, respuesta)
@@ -90,8 +72,23 @@ async def webhook(request: Request):
 
     return {"status": "ok"}
 
-# ── Claude API ───────────────────────────────────────
-async def procesar_con_claude(mensaje: str, usuario: str) -> str:
+# ── Procesar mensaje: bridge o Claude directo ────────
+async def procesar_mensaje(mensaje: str) -> str:
+    # Intentar bridge local primero
+    if BRIDGE_URL:
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.post(
+                    f"{BRIDGE_URL}/ask",
+                    json={"mensaje": mensaje},
+                    timeout=60
+                )
+                data = r.json()
+                return data.get("respuesta", "Sin respuesta del bridge.")
+        except Exception as e:
+            logger.warning(f"Bridge no disponible: {e} — usando Claude directo")
+
+    # Fallback: Claude directo sin herramientas
     async with httpx.AsyncClient() as client:
         r = await client.post(
             "https://api.anthropic.com/v1/messages",
@@ -103,15 +100,13 @@ async def procesar_con_claude(mensaje: str, usuario: str) -> str:
             json={
                 "model": "claude-haiku-4-5-20251001",
                 "max_tokens": 500,
-                "system": SYSTEM_PROMPT,
-                "messages": [
-                    {"role": "user", "content": mensaje}
-                ]
+                "system": "Eres Avi, asistente de Crosslog Logística. Directa, sin presentaciones. Español.",
+                "messages": [{"role": "user", "content": mensaje}]
             },
             timeout=30
         )
         data = r.json()
-        logger.info(f"Claude API response: {data}")
+        logger.info(f"Claude fallback response: {data}")
         return data["content"][0]["text"]
 
 # ── Enviar mensaje WhatsApp ──────────────────────────
