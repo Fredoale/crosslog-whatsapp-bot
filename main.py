@@ -45,20 +45,6 @@ async def webhook(request: Request):
                 logger.info(f"Número no autorizado: {from_num} | Autorizados: {USUARIOS_AUTORIZADOS}")
                 return {"status": "ignored"}
 
-        # Detectar saludos simples
-        saludos = ["hola", "buenas", "buenos días", "buenos dias", "buen día", "buen dia",
-                   "qué tal", "que tal", "hey", "hi", "hello", "buenas tardes", "buenas noches"]
-        if text.lower().strip() in saludos:
-            import random
-            opciones = [
-                "¡Activa! ¿Qué movemos hoy?",
-                "¡Buenas! ¿Viajes, HDRs o qué necesitás?",
-                "¡Qué hay! ¿En qué te ayudo?",
-                "¡Lista! ¿Por dónde arrancamos?",
-            ]
-            await enviar_mensaje(from_num, random.choice(opciones))
-            return {"status": "ok"}
-
         # Procesar: bridge local si está disponible, sino Claude directo
         respuesta = await procesar_mensaje(text)
         logger.info(f"Respuesta: {respuesta[:50]}")
