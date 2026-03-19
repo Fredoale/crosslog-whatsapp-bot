@@ -63,6 +63,20 @@ async def webhook(request: Request):
                 logger.info(f"Número no autorizado: {from_num} | Autorizados: {USUARIOS_AUTORIZADOS}")
                 return {"status": "ignored"}
 
+        # Detectar saludos simples
+        saludos = ["hola", "buenas", "buenos días", "buenos dias", "buen día", "buen dia",
+                   "qué tal", "que tal", "hey", "hi", "hello", "buenas tardes", "buenas noches"]
+        if text.lower().strip() in saludos:
+            import random
+            opciones = [
+                "¡Activa! ¿Qué movemos hoy?",
+                "¡Buenas! ¿Viajes, HDRs o qué necesitás?",
+                "¡Qué hay! ¿En qué te ayudo?",
+                "¡Lista! ¿Por dónde arrancamos?",
+            ]
+            await enviar_mensaje(from_num, random.choice(opciones))
+            return {"status": "ok"}
+
         # Procesar con Claude
         respuesta = await procesar_con_claude(text, from_num)
         logger.info(f"Respuesta Claude: {respuesta[:50]}")
@@ -91,8 +105,7 @@ async def procesar_con_claude(mensaje: str, usuario: str) -> str:
                 "max_tokens": 500,
                 "system": SYSTEM_PROMPT,
                 "messages": [
-                    {"role": "user", "content": mensaje},
-                    {"role": "assistant", "content": "¡"}
+                    {"role": "user", "content": mensaje}
                 ]
             },
             timeout=30
