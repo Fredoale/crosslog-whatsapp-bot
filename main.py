@@ -1,6 +1,9 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
-import httpx, os, json
+import httpx, os, json, logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -39,19 +42,24 @@ async def webhook(request: Request):
         from_num = msg["from"]
         text     = msg["text"]["body"] if msg["type"] == "text" else ""
 
+        logger.info(f"Mensaje de {from_num}: {text[:50]}")
+
         # Verificar usuario autorizado
         if USUARIOS_AUTORIZADOS and USUARIOS_AUTORIZADOS[0]:
             if from_num not in USUARIOS_AUTORIZADOS:
+                logger.info(f"Número no autorizado: {from_num} | Autorizados: {USUARIOS_AUTORIZADOS}")
                 return {"status": "ignored"}
 
         # Procesar con Claude
         respuesta = await procesar_con_claude(text, from_num)
+        logger.info(f"Respuesta Claude: {respuesta[:50]}")
 
         # Enviar respuesta por WhatsApp
         await enviar_mensaje(from_num, respuesta)
+        logger.info(f"Mensaje enviado a {from_num}")
 
-    except (KeyError, IndexError):
-        pass  # No es un mensaje de texto, ignorar
+    except Exception as e:
+        logger.error(f"Error procesando mensaje: {e}", exc_info=True)
 
     return {"status": "ok"}
 
@@ -74,6 +82,7 @@ async def procesar_con_claude(mensaje: str, usuario: str) -> str:
             timeout=30
         )
         data = r.json()
+        logger.info(f"Claude API response: {data}")
         return data["content"][0]["text"]
 
 # ── Enviar mensaje WhatsApp ──────────────────────────
