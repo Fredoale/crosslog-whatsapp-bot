@@ -90,7 +90,10 @@ async def procesar_con_claude(mensaje: str, usuario: str) -> str:
                 "model": "claude-haiku-4-5-20251001",
                 "max_tokens": 500,
                 "system": SYSTEM_PROMPT,
-                "messages": [{"role": "user", "content": mensaje}]
+                "messages": [
+                    {"role": "user", "content": mensaje},
+                    {"role": "assistant", "content": "¡"}
+                ]
             },
             timeout=30
         )
