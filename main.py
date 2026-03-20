@@ -55,8 +55,8 @@ async def webhook(request: Request):
         elif msg_type == "image":
             media_id  = msg["image"]["id"]
             mime_type = msg["image"].get("mime_type", "image/jpeg")
-            caption   = msg["image"].get("caption", "")
-            text = caption or "Analizá esta imagen y describí qué ves. Si hay texto, números o datos relevantes para logística, extraelos."
+            caption   = msg["image"].get("caption", "").strip()
+            text = caption if caption else "extraer"
             image_data = await descargar_media_wa(media_id, mime_type)
             logger.info(f"Imagen recibida — caption: {caption[:50] if caption else '(sin caption)'}")
         else:
@@ -206,18 +206,35 @@ async def procesar_con_vision(texto: str, image_data: dict) -> str:
             json={
                 "model": "claude-haiku-4-5-20251001",
                 "max_tokens": 1000,
-                "system": "Eres Avi, asistente operativa de Crosslog Logística. Analizás imágenes de documentos logísticos: remitos, HDRs, planillas, fotos de carga. Directa, sin presentaciones. Español. Sin markdown con # ni **, usá texto plano.",
+                "system": """Eres Avi, asistente operativa de Crosslog Logística.
+Cuando recibís una imagen de HDR o hoja de ruta, extraé los datos y respondé SIEMPRE en este formato:
+
+DADOR DE CARGA: [cliente]
+
+ASIGNACION DE VIAJE
+
+❖ N de Hoja de Ruta: [numero]
+❖ Fecha Inicio: [fecha]
+❖ Horario de Carga: [horario]
+❖ Interno: [interno]
+❖ Tipo de Vehiculo: [tipo]
+❖ Chofer: [nombre]
+
+❖ Sitios de Entrega:
+- CARGA: [lugar de carga]
+- DESCARGA: [destino 1]
+- [destino 2 si hay]
+- [destino N si hay]
+
+❖ Enviado: [fecha y hora si figura]
+
+Si la imagen no es un HDR, describí lo que ves de forma directa y útil para logística.
+Sin markdown con # ni **. Texto plano.""",
                 "messages": [{
                     "role": "user",
                     "content": [
-                        {
-                            "type": "image",
-                            "source": image_data
-                        },
-                        {
-                            "type": "text",
-                            "text": texto
-                        }
+                        {"type": "image", "source": image_data},
+                        {"type": "text", "text": texto}
                     ]
                 }]
             },
