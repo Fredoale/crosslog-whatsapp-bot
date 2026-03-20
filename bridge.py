@@ -5,7 +5,7 @@ Corre en WSL2 puerto 8001.
 """
 from fastapi import FastAPI, Request
 import httpx, subprocess, os, json, re, logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,6 +18,51 @@ OBSIDIAN_URL   = "http://localhost:27123"
 GOOGLE_ACC     = "alealfredo.af@gmail.com"
 
 env = {**os.environ, "GOG_KEYRING_PASSWORD": ""}
+
+# ── Memoria de conversación ───────────────────────────────────────────────────
+_memoria: dict = {}          # {numero: {"mensajes": [...], "ultimo": datetime}}
+MAX_TURNOS     = 10          # máximo intercambios a recordar
+TIMEOUT_MIN    = 30          # minutos sin actividad → limpiar sesión
+
+def cargar_historial(numero: str) -> list:
+    """Carga historial desde RAM, o desde Obsidian si no está en RAM."""
+    if numero in _memoria:
+        return _memoria[numero]["mensajes"]
+    # Intentar cargar desde Obsidian
+    try:
+        import urllib.request
+        ruta = f"Conversaciones/{numero}.json"
+        req = urllib.request.Request(f"{OBSIDIAN_URL}/vault/{ruta}")
+        req.add_header("Authorization", f"Bearer {OBSIDIAN_TOKEN}")
+        contenido = urllib.request.urlopen(req, timeout=3).read().decode("utf-8")
+        mensajes = json.loads(contenido)
+        _memoria[numero] = {"mensajes": mensajes, "ultimo": datetime.now()}
+        logger.info(f"Historial cargado desde Obsidian para {numero}: {len(mensajes)} turnos")
+        return mensajes
+    except Exception:
+        return []
+
+def guardar_historial(numero: str, mensajes: list):
+    """Guarda historial en RAM y en Obsidian."""
+    _memoria[numero] = {"mensajes": mensajes, "ultimo": datetime.now()}
+    try:
+        import urllib.request
+        ruta = f"Conversaciones/{numero}.json"
+        data = json.dumps(mensajes, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(f"{OBSIDIAN_URL}/vault/{ruta}", data=data, method="PUT")
+        req.add_header("Authorization", f"Bearer {OBSIDIAN_TOKEN}")
+        req.add_header("Content-Type", "application/json")
+        urllib.request.urlopen(req, timeout=3)
+    except Exception as e:
+        logger.warning(f"No se pudo guardar historial en Obsidian: {e}")
+
+def limpiar_sesiones_viejas():
+    """Elimina de RAM sesiones inactivas por más de TIMEOUT_MIN minutos."""
+    ahora = datetime.now()
+    viejos = [n for n, v in _memoria.items()
+              if (ahora - v["ultimo"]).total_seconds() > TIMEOUT_MIN * 60]
+    for n in viejos:
+        del _memoria[n]
 
 def build_system_prompt_base() -> str:
     hoy = datetime.now().strftime("%A %d de %B de %Y")
@@ -43,6 +88,13 @@ Tenés acceso a herramientas reales:
 Cuando el usuario pida datos (HDR, viajes, tarifas, clientes), usá las herramientas. No inventes datos.
 Si dicen "mañana", la fecha es {manana_fmt}. Si dicen "hoy", usá la fecha de hoy.
 Respuestas cortas y directas. Sin presentarte. Sin listas de capacidades.
+
+IMPORTANTE — URLs y links:
+- Si el resultado de una herramienta contiene URLs (https://...), copialas EXACTAMENTE en la respuesta, sin resumirlas ni reemplazarlas por texto descriptivo.
+- PDFs: mostrá cada URL en una línea con "📎 PDF 1: https://..."
+- Mapas/GPS: mostrá la URL con "📍 Mapa: https://..."
+- NUNCA escribas "3 archivos en Drive" o "GPS guardado" — siempre poné el link real.
+
 Este es un canal de WhatsApp. Usá formato WhatsApp:
 - *texto* para negrita (títulos, campos importantes)
 - _texto_ para cursiva
@@ -185,14 +237,39 @@ def ejecutar_tool(nombre: str, inputs: dict) -> str:
         return tool_ejecutar_script(inputs["script"], inputs.get("args", []))
     return "Herramienta desconocida"
 
+# ── Formatear resultado HDR para WhatsApp ────────────────────────────────────
+
+def formatear_para_whatsapp(texto: str) -> str:
+    """Convierte output de buscar-hdr.py a formato WhatsApp legible."""
+    lineas = []
+    for linea in texto.splitlines():
+        # URLs de PDFs separadas por · → una por línea
+        if "📎 Archivos:" in linea:
+            urls = [u.strip() for u in linea.replace("📎 Archivos:", "").split("·") if u.strip()]
+            for i, url in enumerate(urls, 1):
+                lineas.append(f"📎 PDF {i}: {url}")
+        # URL de mapa sola en una línea
+        elif linea.strip().startswith("https://maps.google.com"):
+            lineas.append(f"📍 Mapa: {linea.strip()}")
+        else:
+            lineas.append(linea)
+    return "\n".join(lineas)
+
 # ── Endpoint principal ────────────────────────────────────────────────────────
 
 @app.post("/ask")
 async def ask(request: Request):
     body = await request.json()
-    mensaje = body.get("mensaje", "")
+    mensaje  = body.get("mensaje", "")
+    numero   = body.get("numero", "desconocido")
 
-    messages = [{"role": "user", "content": mensaje}]
+    limpiar_sesiones_viejas()
+
+    # Cargar historial y agregar mensaje actual
+    historial = cargar_historial(numero)
+    historial.append({"role": "user", "content": mensaje})
+    messages = historial[-MAX_TURNOS * 2:]  # máx 20 entradas (10 turnos)
+
     system_prompt = cargar_personalidad()
 
     async with httpx.AsyncClient() as client:
@@ -222,10 +299,13 @@ async def ask(request: Request):
                 return {"respuesta": f"Error de API: {data['error'].get('message', 'desconocido')}"}
 
             if stop_reason == "end_turn":
-                # Respuesta final
+                # Respuesta final — guardar historial
                 for block in data["content"]:
                     if block["type"] == "text":
-                        return {"respuesta": block["text"]}
+                        respuesta = block["text"]
+                        historial.append({"role": "assistant", "content": respuesta})
+                        guardar_historial(numero, historial[-MAX_TURNOS * 2:])
+                        return {"respuesta": respuesta}
                 return {"respuesta": "Sin respuesta"}
 
             elif stop_reason == "tool_use":
@@ -235,6 +315,12 @@ async def ask(request: Request):
                 for block in data["content"]:
                     if block["type"] == "tool_use":
                         resultado = ejecutar_tool(block["name"], block["input"])
+                        # buscar_hdr: devolver directo sin reformatear (preserva URLs)
+                        if block["name"] == "buscar_hdr":
+                            respuesta = formatear_para_whatsapp(resultado)
+                            historial.append({"role": "assistant", "content": respuesta})
+                            guardar_historial(numero, historial[-MAX_TURNOS * 2:])
+                            return {"respuesta": respuesta}
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block["id"],

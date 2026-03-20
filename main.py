@@ -84,7 +84,7 @@ async def webhook(request: Request):
                 return {"status": "ignored"}
 
         # Procesar: bridge local si está disponible, sino Claude directo
-        respuesta = await procesar_mensaje(text, image_data)
+        respuesta = await procesar_mensaje(text, image_data, from_num)
         logger.info(f"Respuesta generada: {respuesta[:50]}")
 
         # Enviar respuesta por WhatsApp
@@ -165,7 +165,7 @@ async def transcribir_audio_wa(media_id: str, mime_type: str) -> str:
         return "No pude procesar el audio. Mandame el mensaje en texto."
 
 # ── Procesar mensaje: bridge o Claude directo ────────
-async def procesar_mensaje(mensaje: str, image_data: dict = None) -> str:
+async def procesar_mensaje(mensaje: str, image_data: dict = None, numero: str = "") -> str:
     # Imágenes van directo a Claude (visión) — el bridge no soporta imágenes
     if image_data:
         return await procesar_con_vision(mensaje, image_data)
@@ -176,7 +176,7 @@ async def procesar_mensaje(mensaje: str, image_data: dict = None) -> str:
             async with httpx.AsyncClient() as client:
                 r = await client.post(
                     f"{BRIDGE_URL}/ask",
-                    json={"mensaje": mensaje},
+                    json={"mensaje": mensaje, "numero": numero},
                     timeout=90
                 )
                 data = r.json()
