@@ -44,14 +44,24 @@ async def webhook(request: Request):
 
         if msg_type == "text":
             text = msg["text"]["body"]
+            image_data = None
         elif msg_type in ("audio", "voice"):
             media_id  = msg[msg_type]["id"]
             mime_type = msg[msg_type].get("mime_type", "audio/ogg")
             logger.info(f"Audio recibido — transcribiendo ({mime_type})")
             text = await transcribir_audio_wa(media_id, mime_type)
+            image_data = None
             logger.info(f"Transcripción: {text[:80]}")
+        elif msg_type == "image":
+            media_id  = msg["image"]["id"]
+            mime_type = msg["image"].get("mime_type", "image/jpeg")
+            caption   = msg["image"].get("caption", "")
+            text = caption or "Analizá esta imagen y describí qué ves. Si hay texto, números o datos relevantes para logística, extraelos."
+            image_data = await descargar_media_wa(media_id, mime_type)
+            logger.info(f"Imagen recibida — caption: {caption[:50] if caption else '(sin caption)'}")
         else:
             text = ""
+            image_data = None
 
         # Ignorar mensajes ya procesados (WhatsApp reintenta si tarda)
         if msg_id and msg_id in _mensajes_procesados:
@@ -71,7 +81,7 @@ async def webhook(request: Request):
                 return {"status": "ignored"}
 
         # Procesar: bridge local si está disponible, sino Claude directo
-        respuesta = await procesar_mensaje(text)
+        respuesta = await procesar_mensaje(text, image_data)
         logger.info(f"Respuesta: {respuesta[:50]}")
 
         # Enviar respuesta por WhatsApp
@@ -82,6 +92,31 @@ async def webhook(request: Request):
         logger.error(f"Error procesando mensaje: {e}", exc_info=True)
 
     return {"status": "ok"}
+
+# ── Descargar media de Meta API ──────────────────────
+async def descargar_media_wa(media_id: str, mime_type: str) -> dict:
+    try:
+        import base64
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"https://graph.facebook.com/v19.0/{media_id}",
+                headers={"Authorization": f"Bearer {WA_TOKEN}"},
+                timeout=10
+            )
+            media_url = r.json()["url"]
+            r2 = await client.get(
+                media_url,
+                headers={"Authorization": f"Bearer {WA_TOKEN}"},
+                timeout=20
+            )
+            return {
+                "type": "base64",
+                "media_type": mime_type,
+                "data": base64.standard_b64encode(r2.content).decode("utf-8")
+            }
+    except Exception as e:
+        logger.error(f"Error descargando imagen: {e}")
+        return None
 
 # ── Transcribir audio WhatsApp con Whisper ───────────
 async def transcribir_audio_wa(media_id: str, mime_type: str) -> str:
@@ -118,7 +153,11 @@ async def transcribir_audio_wa(media_id: str, mime_type: str) -> str:
         return "No pude procesar el audio. Mandame el mensaje en texto."
 
 # ── Procesar mensaje: bridge o Claude directo ────────
-async def procesar_mensaje(mensaje: str) -> str:
+async def procesar_mensaje(mensaje: str, image_data: dict = None) -> str:
+    # Imágenes van directo a Claude (visión) — el bridge no soporta imágenes
+    if image_data:
+        return await procesar_con_vision(mensaje, image_data)
+
     # Intentar bridge local primero
     if BRIDGE_URL:
         try:
@@ -152,6 +191,39 @@ async def procesar_mensaje(mensaje: str) -> str:
         )
         data = r.json()
         logger.info(f"Claude fallback response: {data}")
+        return data["content"][0]["text"]
+
+# ── Procesar imagen con Claude Visión ────────────────
+async def procesar_con_vision(texto: str, image_data: dict) -> str:
+    async with httpx.AsyncClient() as client:
+        r = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 1000,
+                "system": "Eres Avi, asistente operativa de Crosslog Logística. Analizás imágenes de documentos logísticos: remitos, HDRs, planillas, fotos de carga. Directa, sin presentaciones. Español. Sin markdown con # ni **, usá texto plano.",
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": image_data
+                        },
+                        {
+                            "type": "text",
+                            "text": texto
+                        }
+                    ]
+                }]
+            },
+            timeout=30
+        )
+        data = r.json()
         return data["content"][0]["text"]
 
 # ── Enviar mensaje WhatsApp ──────────────────────────
