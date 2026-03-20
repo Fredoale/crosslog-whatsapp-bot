@@ -85,10 +85,11 @@ async def webhook(request: Request):
 
         # Procesar: bridge local si está disponible, sino Claude directo
         respuesta = await procesar_mensaje(text, image_data)
-        logger.info(f"Respuesta: {respuesta[:50]}")
+        logger.info(f"Respuesta generada: {respuesta[:50]}")
 
         # Enviar respuesta por WhatsApp
         await enviar_mensaje(from_num, respuesta)
+        logger.info(f"Mensaje enviado a {from_num}")
         logger.info(f"Mensaje enviado a {from_num}")
 
     except Exception as e:
@@ -176,7 +177,7 @@ async def procesar_mensaje(mensaje: str, image_data: dict = None) -> str:
                 r = await client.post(
                     f"{BRIDGE_URL}/ask",
                     json={"mensaje": mensaje},
-                    timeout=60
+                    timeout=90
                 )
                 data = r.json()
                 return data.get("respuesta", "Sin respuesta del bridge.")
