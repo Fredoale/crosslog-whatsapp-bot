@@ -97,6 +97,12 @@ async def webhook(request: Request):
 async def descargar_media_wa(media_id: str, mime_type: str) -> dict:
     try:
         import base64
+        # Claude solo acepta estos tipos
+        tipos_validos = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+        tipo_limpio = mime_type.split(";")[0].strip().lower()
+        if tipo_limpio not in tipos_validos:
+            tipo_limpio = "image/jpeg"
+
         async with httpx.AsyncClient() as client:
             r = await client.get(
                 f"https://graph.facebook.com/v19.0/{media_id}",
@@ -104,16 +110,18 @@ async def descargar_media_wa(media_id: str, mime_type: str) -> dict:
                 timeout=10
             )
             media_url = r.json()["url"]
+            logger.info(f"Descargando imagen: {media_url[:60]}...")
             r2 = await client.get(
                 media_url,
                 headers={"Authorization": f"Bearer {WA_TOKEN}"},
                 timeout=20
             )
-            return {
-                "type": "base64",
-                "media_type": mime_type,
-                "data": base64.standard_b64encode(r2.content).decode("utf-8")
-            }
+            if not r2.content:
+                logger.error("Imagen descargada vacía")
+                return None
+            b64 = base64.standard_b64encode(r2.content).decode("utf-8")
+            logger.info(f"Imagen OK — {len(r2.content)} bytes, tipo: {tipo_limpio}")
+            return {"type": "base64", "media_type": tipo_limpio, "data": b64}
     except Exception as e:
         logger.error(f"Error descargando imagen: {e}")
         return None
