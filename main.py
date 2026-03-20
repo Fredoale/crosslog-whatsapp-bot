@@ -13,6 +13,7 @@ WA_PHONE_ID    = os.environ["WA_PHONE_ID"]       # Phone Number ID
 VERIFY_TOKEN   = os.environ["VERIFY_TOKEN"]      # Token que vos elegís
 ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
 BRIDGE_URL     = os.environ.get("BRIDGE_URL", "")  # URL del bridge local via ngrok
+OPENAI_KEY     = os.environ.get("OPENAI_API_KEY", "")  # Para Whisper transcripción
 
 # Usuarios internos autorizados (números en formato internacional sin +)
 USUARIOS_AUTORIZADOS = os.environ.get("USUARIOS_AUTORIZADOS", "").split(",")
@@ -39,7 +40,18 @@ async def webhook(request: Request):
         msg      = value["messages"][0]
         msg_id   = msg.get("id", "")
         from_num = msg["from"]
-        text     = msg["text"]["body"] if msg["type"] == "text" else ""
+        msg_type = msg["type"]
+
+        if msg_type == "text":
+            text = msg["text"]["body"]
+        elif msg_type in ("audio", "voice"):
+            media_id  = msg[msg_type]["id"]
+            mime_type = msg[msg_type].get("mime_type", "audio/ogg")
+            logger.info(f"Audio recibido — transcribiendo ({mime_type})")
+            text = await transcribir_audio_wa(media_id, mime_type)
+            logger.info(f"Transcripción: {text[:80]}")
+        else:
+            text = ""
 
         # Ignorar mensajes ya procesados (WhatsApp reintenta si tarda)
         if msg_id and msg_id in _mensajes_procesados:
@@ -70,6 +82,40 @@ async def webhook(request: Request):
         logger.error(f"Error procesando mensaje: {e}", exc_info=True)
 
     return {"status": "ok"}
+
+# ── Transcribir audio WhatsApp con Whisper ───────────
+async def transcribir_audio_wa(media_id: str, mime_type: str) -> str:
+    try:
+        async with httpx.AsyncClient() as client:
+            # 1. Obtener URL del audio desde Meta
+            r = await client.get(
+                f"https://graph.facebook.com/v19.0/{media_id}",
+                headers={"Authorization": f"Bearer {WA_TOKEN}"},
+                timeout=10
+            )
+            media_url = r.json()["url"]
+
+            # 2. Descargar el archivo de audio
+            r2 = await client.get(
+                media_url,
+                headers={"Authorization": f"Bearer {WA_TOKEN}"},
+                timeout=20
+            )
+            audio_bytes = r2.content
+
+            # 3. Transcribir con Whisper
+            ext = "ogg" if "ogg" in mime_type else "m4a"
+            r3 = await client.post(
+                "https://api.openai.com/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {OPENAI_KEY}"},
+                files={"file": (f"audio.{ext}", audio_bytes, mime_type)},
+                data={"model": "whisper-1", "language": "es"},
+                timeout=30
+            )
+            return r3.json().get("text", "No se pudo transcribir el audio.")
+    except Exception as e:
+        logger.error(f"Error transcribiendo audio: {e}")
+        return "No pude procesar el audio. Mandame el mensaje en texto."
 
 # ── Procesar mensaje: bridge o Claude directo ────────
 async def procesar_mensaje(mensaje: str) -> str:
