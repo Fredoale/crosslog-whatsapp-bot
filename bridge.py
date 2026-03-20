@@ -5,6 +5,7 @@ Corre en WSL2 puerto 8001.
 """
 from fastapi import FastAPI, Request
 import httpx, subprocess, os, json, re, logging
+from datetime import datetime
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,13 +19,29 @@ GOOGLE_ACC     = "alealfredo.af@gmail.com"
 
 env = {**os.environ, "GOG_KEYRING_PASSWORD": ""}
 
-SYSTEM_PROMPT_BASE = """Tenés acceso a herramientas reales:
-- buscar_hdr: busca un HDR en las planillas de Google Sheets
+def build_system_prompt_base() -> str:
+    hoy = datetime.now().strftime("%A %d de %B de %Y")
+    dias = {"Monday":"Lunes","Tuesday":"Martes","Wednesday":"Miércoles",
+            "Thursday":"Jueves","Friday":"Viernes","Saturday":"Sábado","Sunday":"Domingo"}
+    meses = {"January":"enero","February":"febrero","March":"marzo","April":"abril",
+             "May":"mayo","June":"junio","July":"julio","August":"agosto",
+             "September":"septiembre","October":"octubre","November":"noviembre","December":"diciembre"}
+    for en, es in {**dias, **meses}.items():
+        hoy = hoy.replace(en, es)
+    manana = datetime.now().strftime("%Y-%m-%d")
+    from datetime import timedelta
+    manana_dt = datetime.now() + timedelta(days=1)
+    manana_fmt = manana_dt.strftime("%d/%m/%Y")
+    return f"""Hoy es {hoy}. Mañana es {manana_fmt}.
+
+Tenés acceso a herramientas reales:
+- buscar_hdr: busca HDRs por número o por fecha (usa formato DD/MM/YYYY)
 - leer_obsidian: lee una nota del vault de Obsidian
 - escribir_obsidian: escribe o actualiza una nota en Obsidian
 - ejecutar_script: ejecuta un script Python del sistema
 
 Cuando el usuario pida datos (HDR, viajes, tarifas, clientes), usá las herramientas. No inventes datos.
+Si dicen "mañana", la fecha es {manana_fmt}. Si dicen "hoy", usá la fecha de hoy.
 Respuestas cortas y directas. Sin presentarte. Sin listas de capacidades.
 Este es un canal de WhatsApp — evitá markdown con asteriscos o #, usá texto plano."""
 
@@ -35,21 +52,21 @@ def cargar_personalidad() -> str:
         req = urllib.request.Request(f"{OBSIDIAN_URL}/vault/Memoria/personalidad-avi.md")
         req.add_header("Authorization", f"Bearer {OBSIDIAN_TOKEN}")
         personalidad = urllib.request.urlopen(req, timeout=3).read().decode("utf-8")
-        return personalidad + "\n\n" + SYSTEM_PROMPT_BASE
+        return personalidad + "\n\n" + build_system_prompt_base()
     except Exception as e:
         logger.warning(f"No se pudo cargar personalidad de Obsidian: {e}")
-        return "Eres Avi, asistente operativa de Crosslog. Venezolana, directa.\n\n" + SYSTEM_PROMPT_BASE
+        return "Eres Avi, asistente operativa de Crosslog. Venezolana, directa.\n\n" + build_system_prompt_base()
 
 TOOLS = [
     {
         "name": "buscar_hdr",
-        "description": "Busca un HDR por número en las planillas de Google Sheets (planificación y registros)",
+        "description": "Busca HDRs en las planillas de Google Sheets. Puede buscar por número de HDR o por fecha de salida.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "numero": {"type": "string", "description": "Número del HDR a buscar"}
-            },
-            "required": ["numero"]
+                "numero": {"type": "string", "description": "Número del HDR a buscar (ej: 12345)"},
+                "fecha": {"type": "string", "description": "Fecha de salida en formato DD/MM/YYYY para listar todos los HDRs de ese día"}
+            }
         }
     },
     {
@@ -91,12 +108,13 @@ TOOLS = [
 
 # ── Ejecutores de herramientas ────────────────────────────────────────────────
 
-def tool_buscar_hdr(numero: str) -> str:
+def tool_buscar_hdr(numero: str = "", fecha: str = "") -> str:
     try:
-        r = subprocess.run(
-            ["python3", "/mnt/c/Users/alfre/buscar-hdr.py", numero, "--silent"],
-            capture_output=True, text=True, env=env, timeout=30
-        )
+        if fecha:
+            args = ["python3", "/mnt/c/Users/alfre/buscar-hdr.py", "--fecha", fecha, "--silent"]
+        else:
+            args = ["python3", "/mnt/c/Users/alfre/buscar-hdr.py", numero, "--silent"]
+        r = subprocess.run(args, capture_output=True, text=True, env=env, timeout=30)
         return r.stdout.strip() or r.stderr.strip() or "Sin resultados"
     except Exception as e:
         return f"Error: {e}"
@@ -137,7 +155,7 @@ def tool_ejecutar_script(script: str, args: list = []) -> str:
 
 def ejecutar_tool(nombre: str, inputs: dict) -> str:
     if nombre == "buscar_hdr":
-        return tool_buscar_hdr(inputs["numero"])
+        return tool_buscar_hdr(inputs.get("numero", ""), inputs.get("fecha", ""))
     elif nombre == "leer_obsidian":
         return tool_leer_obsidian(inputs["ruta"])
     elif nombre == "escribir_obsidian":

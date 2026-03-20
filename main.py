@@ -17,6 +17,9 @@ BRIDGE_URL     = os.environ.get("BRIDGE_URL", "")  # URL del bridge local via ng
 # Usuarios internos autorizados (números en formato internacional sin +)
 USUARIOS_AUTORIZADOS = os.environ.get("USUARIOS_AUTORIZADOS", "").split(",")
 
+# Deduplicación de mensajes — evita procesar el mismo mensaje dos veces
+_mensajes_procesados: set[str] = set()
+
 # ── Webhook verification ─────────────────────────────
 @app.get("/webhook")
 async def verify(request: Request):
@@ -34,8 +37,18 @@ async def webhook(request: Request):
         changes  = entry["changes"][0]
         value    = changes["value"]
         msg      = value["messages"][0]
+        msg_id   = msg.get("id", "")
         from_num = msg["from"]
         text     = msg["text"]["body"] if msg["type"] == "text" else ""
+
+        # Ignorar mensajes ya procesados (WhatsApp reintenta si tarda)
+        if msg_id and msg_id in _mensajes_procesados:
+            logger.info(f"Mensaje duplicado ignorado: {msg_id}")
+            return {"status": "ok"}
+        if msg_id:
+            _mensajes_procesados.add(msg_id)
+            if len(_mensajes_procesados) > 200:  # evitar crecimiento infinito
+                _mensajes_procesados.clear()
 
         logger.info(f"Mensaje de {from_num}: {text[:50]}")
 
