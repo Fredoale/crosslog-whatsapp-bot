@@ -43,7 +43,28 @@ Tenés acceso a herramientas reales:
 Cuando el usuario pida datos (HDR, viajes, tarifas, clientes), usá las herramientas. No inventes datos.
 Si dicen "mañana", la fecha es {manana_fmt}. Si dicen "hoy", usá la fecha de hoy.
 Respuestas cortas y directas. Sin presentarte. Sin listas de capacidades.
-Este es un canal de WhatsApp — evitá markdown con asteriscos o #, usá texto plano."""
+Este es un canal de WhatsApp. Usá formato WhatsApp:
+- *texto* para negrita (títulos, campos importantes)
+- _texto_ para cursiva
+- • para viñetas (una por línea)
+- Emojis para seccionar: 📋 Planificación, ⚙️ Ejecución, ✅ Estado
+- Separá secciones con una línea en blanco
+- NO uses # ni ** ni markdown estilo web
+
+Ejemplo de HDR:
+*HDR-1234 | CLIENTE → DESTINO*
+
+📋 *Planificación:*
+• Fecha: Viernes 20/03/2026
+• Unidad: Chasis INT-41
+• Chofer: Apellido Nombre
+• Carga: CLIENTE
+• Descarga: Destino (Dirección)
+• Peso: X.XXX KG
+
+⚙️ *Estado:* ⏳ Sin ejecutar aún
+
+¿Necesitás actualizar algo?"""
 
 def cargar_personalidad() -> str:
     """Carga la personalidad de Avi desde Obsidian en cada request."""
