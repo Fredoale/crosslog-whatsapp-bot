@@ -37,10 +37,13 @@ async def webhook(request: Request):
         entry    = body["entry"][0]
         changes  = entry["changes"][0]
         value    = changes["value"]
+        if "messages" not in value:
+            return {"status": "ok"}  # evento de estado (entregado/leído), ignorar
         msg      = value["messages"][0]
         msg_id   = msg.get("id", "")
         from_num = msg["from"]
         msg_type = msg["type"]
+        logger.info(f"Tipo de mensaje recibido: {msg_type}")
 
         if msg_type == "text":
             text = msg["text"]["body"]
@@ -60,8 +63,8 @@ async def webhook(request: Request):
             image_data = await descargar_media_wa(media_id, mime_type)
             logger.info(f"Imagen recibida — caption: {caption[:50] if caption else '(sin caption)'}")
         else:
-            text = ""
-            image_data = None
+            logger.info(f"Tipo de mensaje no soportado: {msg_type}")
+            return {"status": "ok"}  # sticker, video, contacto, etc.
 
         # Ignorar mensajes ya procesados (WhatsApp reintenta si tarda)
         if msg_id and msg_id in _mensajes_procesados:
