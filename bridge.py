@@ -176,6 +176,14 @@ TOOLS = [
             },
             "required": ["script"]
         }
+    },
+    {
+        "name": "resumen_hoy",
+        "description": "Genera el resumen del día: HDRs programados, mails pendientes y estado general. Usar cuando el usuario pida 'hoy', '/hoy', 'resumen', 'briefing' o quiera saber qué hay para hoy.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
     }
 ]
 
@@ -226,6 +234,16 @@ def tool_ejecutar_script(script: str, args: list = []) -> str:
     except Exception as e:
         return f"Error: {e}"
 
+def tool_resumen_hoy() -> str:
+    try:
+        r = subprocess.run(
+            ["python3", "/mnt/c/Users/alfre/briefing.py", "--silent"],
+            capture_output=True, text=True, env=env, timeout=60
+        )
+        return r.stdout.strip() or r.stderr.strip() or "Sin datos para hoy"
+    except Exception as e:
+        return f"Error generando resumen: {e}"
+
 def ejecutar_tool(nombre: str, inputs: dict) -> str:
     if nombre == "buscar_hdr":
         return tool_buscar_hdr(inputs.get("numero", ""), inputs.get("fecha", ""))
@@ -235,6 +253,8 @@ def ejecutar_tool(nombre: str, inputs: dict) -> str:
         return tool_escribir_obsidian(inputs["ruta"], inputs["contenido"])
     elif nombre == "ejecutar_script":
         return tool_ejecutar_script(inputs["script"], inputs.get("args", []))
+    elif nombre == "resumen_hoy":
+        return tool_resumen_hoy()
     return "Herramienta desconocida"
 
 # ── Formatear resultado HDR para WhatsApp ────────────────────────────────────
@@ -315,8 +335,8 @@ async def ask(request: Request):
                 for block in data["content"]:
                     if block["type"] == "tool_use":
                         resultado = ejecutar_tool(block["name"], block["input"])
-                        # buscar_hdr: devolver directo sin reformatear (preserva URLs)
-                        if block["name"] == "buscar_hdr":
+                        # estos tools devuelven directo sin que Claude reformatee
+                        if block["name"] in ("buscar_hdr", "resumen_hoy"):
                             respuesta = formatear_para_whatsapp(resultado)
                             historial.append({"role": "assistant", "content": respuesta})
                             guardar_historial(numero, historial[-MAX_TURNOS * 2:])
