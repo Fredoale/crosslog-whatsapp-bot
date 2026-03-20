@@ -13,7 +13,7 @@ WA_PHONE_ID    = os.environ["WA_PHONE_ID"]       # Phone Number ID
 VERIFY_TOKEN   = os.environ["VERIFY_TOKEN"]      # Token que vos elegís
 ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
 BRIDGE_URL     = os.environ.get("BRIDGE_URL", "")  # URL del bridge local via ngrok
-OPENAI_KEY     = os.environ.get("OPENAI_API_KEY", "")  # Para Whisper transcripción
+OPENAI_KEY     = os.environ.get("GROQ_API_KEY", "")  # Para Whisper transcripción (Groq)
 
 # Usuarios internos autorizados (números en formato internacional sin +)
 USUARIOS_AUTORIZADOS = os.environ.get("USUARIOS_AUTORIZADOS", "").split(",")
@@ -106,10 +106,10 @@ async def transcribir_audio_wa(media_id: str, mime_type: str) -> str:
             # 3. Transcribir con Whisper
             ext = "ogg" if "ogg" in mime_type else "m4a"
             r3 = await client.post(
-                "https://api.openai.com/v1/audio/transcriptions",
+                "https://api.groq.com/openai/v1/audio/transcriptions",
                 headers={"Authorization": f"Bearer {OPENAI_KEY}"},
                 files={"file": (f"audio.{ext}", audio_bytes, mime_type)},
-                data={"model": "whisper-1", "language": "es"},
+                data={"model": "whisper-large-v3", "language": "es"},
                 timeout=30
             )
             return r3.json().get("text", "No se pudo transcribir el audio.")
